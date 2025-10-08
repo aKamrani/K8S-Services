@@ -1,0 +1,35 @@
+apiVersion: minio.min.io/v2
+kind: Tenant
+metadata:
+  name: myservice-minio
+  namespace: myservice-minio
+spec:
+  configuration:
+    name: minio-creds-secret
+  image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+  pools:
+    - name: pool-0
+      servers: 3
+      volumesPerServer: 2
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 1Gi
+          storageClassName: minio-local-storage
+      resources:
+        requests:
+          memory: 1Gi
+          cpu: 250m
+        limits:
+          memory: 2Gi
+          cpu: 1
+  mountPath: /export
+  requestAutoCert: false
+  exposeServices:
+    console: true
+    minio: true
+  buckets:
+    - name: myservice-artifacts

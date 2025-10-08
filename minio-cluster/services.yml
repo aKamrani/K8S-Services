@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: myservice-minio-nodeport
+  namespace: myservice-minio
+spec:
+  type: NodePort
+  ports:
+    - name: http-minio
+      port: 9000
+      targetPort: 9000
+      nodePort: 32000
+  selector:
+    v1.min.io/tenant: myservice-minio
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: myservice-minio-console-nodeport
+  namespace: myservice-minio
+spec:
+  type: NodePort
+  selector:
+    v1.min.io/tenant: myservice-minio
+  ports:
+    - name: http-minio-console
+      port: 9090
+      targetPort: 9090
+      nodePort: 32443
