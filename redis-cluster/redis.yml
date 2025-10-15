@@ -1,0 +1,146 @@
+# helm repo add ot-helm https://ot-container-kit.github.io/helm-charts/
+# helm install redis-operator ot-helm/redis-operator -n redis-operator --create-namespace
+
+# ----------------------------------------------------
+# 1. Namespace
+# ----------------------------------------------------
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: redis
+
+---
+# ----------------------------------------------------
+# 2. Secret: Redis password
+# ----------------------------------------------------
+apiVersion: v1
+kind: Secret
+metadata:
+  name: redis-secret
+  namespace: redis
+type: Opaque
+stringData:
+  password: "MyStrongRedisPass123"
+
+---
+# ----------------------------------------------------
+# 3. ConfigMap: Redis additional configuration
+# ----------------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-external-config
+  namespace: redis
+data:
+  redis-additional.conf: |
+    maxmemory-policy allkeys-lru
+    appendonly yes
+    save 60 1000
+    bind 0.0.0.0
+    protected-mode no
+    port 6379
+    tcp-backlog 511
+    timeout 0
+    tcp-keepalive 300
+    daemonize no
+    supervised no
+    databases 16
+
+---
+# ----------------------------------------------------
+# 3. Redis Sentinel cluster definition
+# ----------------------------------------------------
+apiVersion: redis.redis.opstreelabs.in/v1beta2
+kind: RedisReplication
+metadata:
+  name: redis-replication
+  namespace: redis
+spec:
+  clusterSize: 3      # 1 master + 2 replicas
+  kubernetesConfig:
+    image: docker.arvancloud.ir/redis:6.2.6
+    imagePullPolicy: IfNotPresent
+    redisSecret:
+      name: redis-secret
+      key: password
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "256Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+  storage:
+    volumeClaimTemplate:
+      spec:
+        storageClassName: "local-storage"
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: "2Gi"
+  redisConfig: 
+    additionalRedisConfig: redis-external-config
+  redisExporter:
+    enabled: false
+    image: quay.io/opstree/redis-exporter:v1.44.0
+  podSecurityContext:
+    runAsUser: 1000
+    fsGroup: 1000
+
+---
+apiVersion: redis.redis.opstreelabs.in/v1beta2
+kind: RedisSentinel
+metadata:
+  name: redis-sentinel
+  namespace: redis
+spec:
+  clusterSize: 3
+  podSecurityContext:
+    runAsUser: 1000
+    fsGroup: 1000
+  redisSentinelConfig:
+    redisReplicationName: redis-replication
+    redisReplicationPassword:
+      secretKeyRef:
+        name: redis-secret
+        key: password
+    quorum: "2"
+    downAfterMilliseconds: "30000"
+    failoverTimeout: "180000"
+    parallelSyncs: "1"
+    additionalSentinelConfig: |
+      sentinel resolve-hostnames yes
+      sentinel announce-hostnames yes
+  kubernetesConfig:
+    image: quay.io/opstree/redis-sentinel:6.2.6
+    imagePullPolicy: IfNotPresent
+    redisSecret:
+      name: redis-secret
+      key: password
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+
+---
+# ----------------------------------------------------
+# 4. LoadBalancer service for external Redis access
+# ----------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-sentinel-lb
+  namespace: redis
+  labels:
+    app: redis-sentinel
+spec:
+  type: LoadBalancer
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+  selector:
+    app: redis-sentinel
