@@ -19,7 +19,7 @@ metadata:
   name: redis-secret
   namespace: redis
 type: Opaque
-stringData:
+data:
   password: "MyStrongRedisPass123"
 
 ---
@@ -45,6 +45,7 @@ data:
     daemonize no
     supervised no
     databases 16
+    requirepass MyStrongRedisPass123
 
 ---
 # ----------------------------------------------------
@@ -60,6 +61,7 @@ spec:
   kubernetesConfig:
     image: docker.arvancloud.ir/redis:6.2.6
     imagePullPolicy: IfNotPresent
+    imagePullSecrets: []
     redisSecret:
       name: redis-secret
       key: password
