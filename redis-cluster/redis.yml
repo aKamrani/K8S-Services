@@ -1,6 +1,18 @@
 # helm repo add ot-helm https://ot-container-kit.github.io/helm-charts/
 # helm install redis-operator ot-helm/redis-operator -n redis-operator --create-namespace
 
+# Access Redis Write‑Enabled (full RW)
+# redis://redis-replication-master.redis.svc.cluster.local:6379
+# redis://:MyStrongRedisPass123@redis-replication-master.redis.svc.cluster.local:6379
+
+# Access Redis Read‑Only (RO)
+# redis://redis-replication-replica.redis.svc.cluster.local:6379
+# redis://:MyStrongRedisPass123@redis-replication-replica.redis.svc.cluster.local:6379
+
+# Access Redis Sentinel (SENTINEL)
+# sentinel://redis-sentinel-sentinel.redis.svc.cluster.local:26379?master=myMaster
+# sentinel://:MyStrongRedisPass123@redis-sentinel-sentinel.redis.svc.cluster.local:26379?master=myMaster
+
 # ----------------------------------------------------
 # 1. Namespace
 # ----------------------------------------------------
@@ -21,10 +33,12 @@ metadata:
 type: Opaque
 data:
   password: "MyStrongRedisPass123"
+stringData:
+  password: "MyStrongRedisPass123"
 
 ---
 # ----------------------------------------------------
-# 3. ConfigMap: Redis additional configuration
+# 3. ConfigMap: Redis additional configuration (HAVE A PROLEM, NOT AFFECTED REDIS CONFIGURATION)
 # ----------------------------------------------------
 apiVersion: v1
 kind: ConfigMap
@@ -33,6 +47,8 @@ metadata:
   namespace: redis
 data:
   redis-additional.conf: |
+    requirepass MyStrongRedisPass123
+    masterauth MyStrongRedisPass123
     maxmemory-policy allkeys-lru
     appendonly yes
     save 60 1000
@@ -45,8 +61,6 @@ data:
     daemonize no
     supervised no
     databases 16
-    requirepass MyStrongRedisPass123
-
 ---
 # ----------------------------------------------------
 # 3. Redis Sentinel cluster definition
@@ -58,13 +72,15 @@ metadata:
   namespace: redis
 spec:
   clusterSize: 3      # 1 master + 2 replicas
+  redisConfig: 
+    additionalRedisConfig: redis-external-config
   kubernetesConfig:
     image: docker.arvancloud.ir/redis:6.2.6
     imagePullPolicy: IfNotPresent
     imagePullSecrets: []
-    redisSecret:
-      name: redis-secret
-      key: password
+    # redisSecret:
+    #   name: redis-secret
+    #   key: password
     resources:
       requests:
         cpu: "200m"
@@ -80,8 +96,6 @@ spec:
         resources:
           requests:
             storage: "2Gi"
-  redisConfig: 
-    additionalRedisConfig: redis-external-config
   redisExporter:
     enabled: false
     image: quay.io/opstree/redis-exporter:v1.44.0
@@ -102,23 +116,23 @@ spec:
     fsGroup: 1000
   redisSentinelConfig:
     redisReplicationName: redis-replication
-    redisReplicationPassword:
-      secretKeyRef:
-        name: redis-secret
-        key: password
+    # redisReplicationPassword:
+    #   secretKeyRef:
+    #     name: redis-secret
+    #     key: password
     quorum: "2"
     downAfterMilliseconds: "30000"
     failoverTimeout: "180000"
     parallelSyncs: "1"
-    additionalSentinelConfig: |
-      sentinel resolve-hostnames yes
-      sentinel announce-hostnames yes
+    # additionalSentinelConfig: |
+    #   sentinel resolve-hostnames yes
+    #   sentinel announce-hostnames yes
   kubernetesConfig:
-    image: quay.io/opstree/redis-sentinel:6.2.6
+    image: quay.io/opstree/redis-sentinel:latest
     imagePullPolicy: IfNotPresent
-    redisSecret:
-      name: redis-secret
-      key: password
+    # redisSecret:
+    #   name: redis-secret
+    #   key: password
     resources:
       requests:
         cpu: "100m"
@@ -146,3 +160,42 @@ spec:
       targetPort: 6379
   selector:
     app: redis-sentinel
+
+---
+# ----------------------------------------------------
+# NodePort Service: external access for Redis master
+# ----------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-replication-nodeport
+  namespace: redis
+  labels:
+    app: redis-replication
+spec:
+  type: NodePort
+  ports:
+    - name: redis
+      port: 6379              # Logical service port
+      targetPort: 6379        # Redis container port
+      nodePort: 30379         # Fixed node port (any free port in 30000–32767)
+  selector:
+    app: redis-replication-master  # Must match labels of master pods
+
+---
+# ----------------------------------------------------
+# NodePort Service: external access for Redis sentinel
+# ----------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-sentinel-nodeport
+  namespace: redis
+spec:
+  type: NodePort
+  ports:
+    - port: 26379
+      targetPort: 26379
+      nodePort: 30380
+  selector:
+    app: redis-sentinel-sentinel
